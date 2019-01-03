@@ -36,7 +36,7 @@ class SentenceCorpus(object):
                 self.dictionary = Dictionary()
                 self.load_dict(vocab_file)
             if not interactflag:
-                self.test = self.sent_tokenize_with_unks(os.path.join(path, testfname))
+                self.test,self.test_classes = self.sent_tokenize_with_unks(os.path.join(path, testfname))
 
     def save_dict(self, path):
         if path[-3:] == 'bin':
