@@ -79,6 +79,8 @@ parser.add_argument('--testfname', type=str, default='test.txt',
 # Runtime parameters
 parser.add_argument('--test', action='store_true',
                     help='test a trained LM')
+parser.add_argument('--train_classifier', action='store_true',
+                    help='train a classifier on an LM')
 parser.add_argument('--single', action='store_true',
                     help='use only a single GPU (even if more are available)')
 
@@ -398,6 +400,81 @@ def test_evaluate(test_sentences, data_source):
         bar.finish()
     return total_loss / len(data_source)
 
+def test_class_evaluate(test_sentences, data_source, class_data_source):
+    # Turn on evaluation mode which disables dropout.
+    if args.adapt:
+        # Must disable cuDNN in order to backprop during eval
+        torch.backends.cudnn.enabled = False
+    model.eval()
+    classifier.eval()
+    total_loss = 0.
+    nclasses = len(corpus.class_dictionary)
+    if args.complexn > nclasses or args.complexn <= 0:
+        args.complexn = nclasses
+        if args.guessn > nclasses:
+            args.guessn = nclasses
+        sys.stderr.write('Using beamsize: '+str(nclasses)+'\n')
+    else:
+        sys.stderr.write('Using beamsize: '+str(args.complexn)+'\n')
+
+    if args.words:
+        if not args.nocheader:
+            if args.complexn == nclasses:
+                print('word{0}sentid{0}sentpos{0}wlen{0}surp{0}entropy{0}entred'.format(args.csep), end='')
+            else:
+                print('word{0}sentid{0}sentpos{0}wlen{0}surp{1}{0}entropy{1}{0}entred{1}'.format(args.csep,args.complexn), end='')
+            if args.guess:
+                for i in range(args.guessn):
+                    print('{0}guess'.format(args.csep)+str(i), end='')
+                    if args.guessscores:
+                        print('{0}gscore'.format(args.csep)+str(i), end='')
+                    elif args.guessprobs:
+                        print('{0}gprob'.format(args.csep)+str(i), end='')
+                    elif args.guessratios:
+                        print('{0}gratio'.format(args.csep)+str(i), end='')
+            sys.stdout.write('\n')
+    if PROGRESS:
+        bar = Bar('Processing', max=len(data_source))
+    for i in range(len(data_source)):
+        sent_ids = data_source[i].to(device)
+        class_sent_ids = class_data_source[i].to(device)
+        # We predict all words but the first, so determine loss for those
+        sent = test_sentences[i]
+        if args.cuda and (not args.single) and (torch.cuda.device_count() > 1):
+            # "module" is necessary when using DataParallel
+            hidden = model.module.init_hidden(1) # number of parallel sentences being processed
+        else:
+            hidden = model.init_hidden(1) # number of parallel sentences being processed
+        data = sent_ids.unsqueeze(1)
+        targets = class_sent_ids.unsqueeze(1)
+        output, hidden = classifier(data, hidden)
+        output_flat = output.view(-1, nclasses)
+        loss = criterion(output_flat, targets)
+        total_loss += loss.item()
+        if args.words:
+            # output word-level complexity metrics
+            get_complexity(output_flat,targets,i)
+        else:
+            # output sentence-level loss
+            print(str(sent)+":"+str(loss.item()))
+
+        if args.adapt:
+            raise Exception("Adaptation is not implemented for classifiers.")
+#            loss.backward()
+#
+#            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
+#            torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
+#            for p in model.parameters():
+#                p.data.add_(-lr, p.grad.data)
+
+        hidden = repackage_hidden(hidden)
+        
+        if PROGRESS:
+            bar.next()
+    if PROGRESS:
+        bar.finish()
+    return total_loss / len(data_source)
+
 def evaluate(data_source):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -582,6 +659,31 @@ elif args.train_classifier:
     except KeyboardInterrupt:
         print('-' * 89)
         print('Exiting from classifier training early')
+elif args.test_classifier:
+    # Load the best saved model.
+    with open(args.model_file, 'rb') as f:
+        model = torch.load(f)
+        # after load the rnn params are not a continuous chunk of memory
+        # this makes them a continuous chunk, and will speed up forward pass
+        model.rnn.flatten_parameters()
+    with open(args.classifier_file, 'rb') as f:
+        classifier = torch.load(f)
+        # after load the classifier params are not a continuous chunk of memory
+        # this makes them a continuous chunk; might speed it up?
+        classifier.rnn.flatten_parameters()
+
+    # Run on test data.
+    if args.interact:
+        raise Exception("Currently classifiers don't work interactively")
+    else:
+        test_loss = test_evaluate(test_sents, test_data, test_class_data)
+        if args.adapt:
+            raise Exception("Currently classifiers don't work adaptively")
+    if not args.interact and not args.nopp:
+        print('=' * 89)
+        print('| End of testing | test loss {:5.2f} | test ppl {:8.2f}'.format(
+            test_loss, math.exp(test_loss)))
+        print('=' * 89)
 else:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
