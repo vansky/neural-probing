@@ -182,10 +182,6 @@ if not args.interact:
     if args.test or args.test_classifier:
         test_sents, test_data = corpus.test
         test_class_sents, test_class_data = corpus.test_classes
-        #print('Test Sents')
-        #print(test_sents)
-        #print('Test_Class_Sents')
-        #print(test_class_sents)
     else:
         train_data = batchify(corpus.train, args.batch_size)
         train_class_data = batchify(corpus.train_classes, args.batch_size)
@@ -260,7 +256,7 @@ def get_guesses(o,scores=False):
 def get_guessscores(o):
     return get_guesses(o,True)
 
-def get_complexity(o,t,sentid):
+def get_complexity(o,t,sentid,which_dictionary=corpus.dictionary):
     Hs = torch.squeeze(apply(get_entropy,o))
     surps = apply(get_surps,o)
 
@@ -269,7 +265,7 @@ def get_complexity(o,t,sentid):
         guessscores = apply(get_guessscores, o)
 
     for corpuspos,targ in enumerate(t):
-        word = corpus.dictionary.idx2word[int(targ)]
+        word = which_dictionary.idx2word[int(targ)]
         if word == '<eos>':
             # don't output the complexity of EOS
             continue
@@ -277,7 +273,7 @@ def get_complexity(o,t,sentid):
         if args.guess:
             outputguesses = []
             for g in range(args.guessn):
-                outputguesses.append(corpus.dictionary.idx2word[int(guesses[corpuspos][g])])
+                outputguesses.append(which_dictionary.idx2word[int(guesses[corpuspos][g])])
                 if args.guessscores:
                     # output raw scores
                     outputguesses.append("{:.3f}".format(float(guessscores[corpuspos][g])))
@@ -457,14 +453,14 @@ def test_class_evaluate(test_sentences, data_source, class_data_source):
         else:
             hidden = model.init_hidden(1) # number of parallel sentences being processed
         data = sent_ids.unsqueeze(1)
-        targets = class_sent_ids.unsqueeze(1)
+        targets = class_sent_ids
         output, hidden = classifier(data, hidden)
         output_flat = output.view(-1, nclasses)
         loss = criterion(output_flat, targets)
         total_loss += loss.item()
         if args.words:
             # output word-level complexity metrics
-            get_complexity(output_flat,targets,i)
+            get_complexity(output_flat,targets,i,corpus.class_dictionary)
         else:
             # output sentence-level loss
             print(str(sent)+":"+str(loss.item()))
@@ -590,11 +586,6 @@ def train_classifier():
         hidden = repackage_hidden(hidden)
         classifier.zero_grad()
         output, hidden = classifier(data, hidden)
-        #print('A')
-        #print(output.view(-1, nclasses).max(1))
-        #print('B')
-        #print(targets)
-        #print('C')
         loss = criterion(output.view(-1, nclasses), targets)
         loss.backward()
 
@@ -667,8 +658,6 @@ elif args.test_classifier:
         model.rnn.flatten_parameters()
     with open(args.classifier_file, 'rb') as f:
         classifier = torch.load(f)
-        # after load the classifier params are not a continuous chunk of memory
-        # this makes them a continuous chunk; might speed it up?
         classifier.rnn_model = model
 
     # Run on test data.
