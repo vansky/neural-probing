@@ -75,15 +75,8 @@ class NN_Classifier(nn.Module):
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden):
-        #print(self.rnn_model.nhid)
-        #print(self.nclass)
-        #print(input.shape)
-        #print(input[0].unsqueeze(0).shape)
-        #print(input.dtype)
         class_output = torch.empty((input.size(0),input.size(1),self.nclass),dtype=torch.float,requires_grad=False)
-        #class_output = input.new_empty((input.size(0),input.size(1),self.nclass))
         for seq_step in range(input.size(0)):
             output, hidden = self.rnn_model(input[seq_step].unsqueeze(0),hidden)
-            #print(self.decoder(hidden[0][self.which_layer]).shape)
             class_output[seq_step,:,:] = self.decoder(hidden[0][self.which_layer].view(1, -1, self.rnn_model.nhid))
-        return class_output, hidden #.view(class_output.size(0), class_output.size(1), self.nclass), hidden
+        return class_output, hidden
