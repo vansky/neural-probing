@@ -19,39 +19,46 @@ class Dictionary(object):
         return len(self.idx2word)
 
 class SentenceCorpus(object):
-    def __init__(self, path, vocab_file, testflag=False, interactflag=False,
+    def __init__(self, path, vocab_file, classifier_vocab_file,
+                 test_flag=False, train_classifier_flag=False,interactflag=False,
                  trainfname='train.txt',
                  validfname='valid.txt',
                  testfname='test.txt'):
-        if not testflag:
+        if not test_flag and not train_classifier_flag:
             self.dictionary = Dictionary()
             self.class_dictionary = Dictionary()
             self.train,self.train_classes = self.tokenize(os.path.join(path, trainfname))
             self.valid,self.valid_classes = self.tokenize_with_unks(os.path.join(path, validfname))
-            self.vocab_file,self.test_classes = self.save_dict(vocab_file)
+            self.vocab_file = self.save_dict(vocab_file, self.dictionary)
+        elif train_classifier_flag:
+            self.dictionary = Dictionary()
+            self.load_dict(vocab_file, self.dictionary)
+            self.class_dictionary = Dictionary()
+            self.train,self.train_classes = self.tokenize(os.path.join(path, trainfname))
+            self.valid,self.valid_classes = self.tokenize_with_unks(os.path.join(path, validfname))
+            self.classifier_vocab_file = self.save_dict(classifier_vocab_file, self.class_dictionary)
         else:
-            if vocab_file[-3:] == 'bin':
-                self.load_dict(vocab_file)
-            else:
-                self.dictionary = Dictionary()
-                self.load_dict(vocab_file)
+            self.dictionary = Dictionary()
+            self.load_dict(vocab_file, self.dictionary)
+            self.class_dictionary = Dictionary()
+            self.load_dict(classifier_vocab_file, self.class_dictionary)
             if not interactflag:
                 self.test,self.test_classes = self.sent_tokenize_with_unks(os.path.join(path, testfname))
 
-    def save_dict(self, path):
+    def save_dict(self, path, which_dictionary):
         if path[-3:] == 'bin':
             # This check actually seems to be faster than passing in a binary flag
             # Assume dict is binarized
             import dill
             with open(path, 'wb') as f:
-                torch.save(self.dictionary, f, pickle_module=dill)
+                torch.save(which_dictionary, f, pickle_module=dill)
         else:
             # Assume dict is plaintext
             with open(path, 'w') as f:
-                for word in self.dictionary.idx2word:
+                for word in which_dictionary.idx2word:
                     f.write(word+'\n')
 
-    def load_dict(self, path):
+    def load_dict(self, path, which_dictionary):
         assert os.path.exists(path)
         if path[-3:] == 'bin':
             # This check actually seems to be faster than passing in a binary flag
@@ -61,13 +68,13 @@ class SentenceCorpus(object):
                 fdata = torch.load(f, pickle_module=dill)
                 if type(fdata) == type(()):
                     # Compatibility with old pytorch LM saving
-                    self.dictionary = fdata[3]
-                self.dictionary = fdata
+                    which_dictionary = fdata[3]
+                which_dictionary = fdata
         else:
             # Assume dict is plaintext
             with open(path, 'r') as f:
                 for line in f:
-                    self.dictionary.add_word(line.strip())
+                    which_dictionary.add_word(line.strip())
 
     def tokenize(self, path):
         """Tokenizes a text file."""
@@ -94,12 +101,11 @@ class SentenceCorpus(object):
                     tokens += len(words)
                     for word in words:
                         self.dictionary.add_word(word)
-                    lang_line = False
                 else:
                     classes = line.split() + ['<eos>']
                     for this_class in classes:
                         self.class_dictionary.add_word(this_class)
-                    lang_line = True
+                lang_line = not lang_line
 
         # Tokenize file content
         with open(path, 'r') as f:
@@ -121,7 +127,6 @@ class SentenceCorpus(object):
                     for word in words:
                         ids[token] = self.dictionary.word2idx[word]
                         token += 1
-                    lang_line = False
                 else:
                     if FIRST:
                         classes = ['<eos>'] + line.split() + ['<eos>']
@@ -131,7 +136,7 @@ class SentenceCorpus(object):
                     for this_class in classes:
                         class_ids[class_token] = self.class_dictionary.word2idx[this_class]
                         class_token += 1
-                    lang_line = True
+                lang_line = not lang_line
         return (ids, class_ids)
 
     def tokenize_with_unks(self, path):
@@ -183,7 +188,6 @@ class SentenceCorpus(object):
                         else:
                             ids[token] = self.dictionary.word2idx[word]
                         token += 1
-                    lang_line = False
                 else:
                     if FIRST:
                         classes = ['<eos>'] + line.split() + ['<eos>']
@@ -197,7 +201,7 @@ class SentenceCorpus(object):
                         else:
                             class_ids[class_token] = self.class_dictionary.word2idx[this_class]
                         class_token += 1
-                    lang_line = True
+                lang_line = not lang_line
         return (ids, class_ids)
 
     def sent_tokenize_with_unks(self, path):
@@ -217,7 +221,7 @@ class SentenceCorpus(object):
                     sents.append(line.strip())
                     words = ['<eos>'] + line.split() + ['<eos>']
                     tokens = len(words)
-    
+
                     # Tokenize file content
                     ids = torch.LongTensor(tokens)
                     token = 0
@@ -233,7 +237,7 @@ class SentenceCorpus(object):
                     class_sents.append(line.strip())
                     classes = ['<eos>'] + line.split() + ['<eos>']
                     tokens = len(classes)
-    
+
                     # Tokenize file content
                     ids = torch.LongTensor(tokens)
                     token = 0
@@ -245,6 +249,7 @@ class SentenceCorpus(object):
                             ids[token] = self.class_dictionary.word2idx[this_class]
                         token += 1
                     class_ids.append(ids)
+                lang_line = not lang_line
         return ((sents, word_ids),(class_sents,class_ids))
 
     def online_tokenize_with_unks(self, line):

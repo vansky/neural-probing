@@ -1,5 +1,6 @@
 import torch.nn as nn
 from torch import Tensor
+import torch
 
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
@@ -60,12 +61,13 @@ class RNNModel(nn.Module):
 class NN_Classifier(nn.Module):
     """Container module that stacks a classifier_decoder on top of an RNN."""
 
-    def __init__(self, rnn_model, nclass):
+    def __init__(self, rnn_model, nclass, which_layer=-1):
         super(NN_Classifier, self).__init__()
         self.rnn_model = rnn_model
         self.nclass = nclass
         self.decoder = nn.Linear(rnn_model.nhid, nclass)
         self.init_weights()
+        self.which_layer = which_layer
 
     def init_weights(self):
         initrange = 0.1
@@ -73,8 +75,15 @@ class NN_Classifier(nn.Module):
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden):
-        class_output = torch.Tensor(input.size(0),input.size(1))
+        #print(self.rnn_model.nhid)
+        #print(self.nclass)
+        #print(input.shape)
+        #print(input[0].unsqueeze(0).shape)
+        #print(input.dtype)
+        class_output = torch.empty((input.size(0),input.size(1),self.nclass),dtype=torch.float,requires_grad=False)
+        #class_output = input.new_empty((input.size(0),input.size(1),self.nclass))
         for seq_step in range(input.size(0)):
-            output, hidden = self.rnn_model(input[seq_step,:],hidden)
-            class_output[seq_step,:] = hidden[-1].view(1, output.size(1), self.rnn_model.nhid)
-        return class_output.view(class_output.size(0), class_output.size(1), self.nclass), hidden
+            output, hidden = self.rnn_model(input[seq_step].unsqueeze(0),hidden)
+            #print(self.decoder(hidden[0][self.which_layer]).shape)
+            class_output[seq_step,:,:] = self.decoder(hidden[0][self.which_layer].view(1, -1, self.rnn_model.nhid))
+        return class_output, hidden #.view(class_output.size(0), class_output.size(1), self.nclass), hidden

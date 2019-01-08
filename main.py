@@ -69,6 +69,8 @@ parser.add_argument('--data_dir', type=str, default='./data/wikitext-2',
                     help='location of the corpus data')
 parser.add_argument('--vocab_file', type=str, default='vocab.txt',
                     help='path to save the vocab file')
+parser.add_argument('--classifier_vocab_file', type=str, default='class_vocab.txt',
+                    help='path to save the classifier vocab file')
 parser.add_argument('--trainfname', type=str, default='train.txt',
                     help='name of the training file')
 parser.add_argument('--validfname', type=str, default='valid.txt',
@@ -81,6 +83,8 @@ parser.add_argument('--test', action='store_true',
                     help='test a trained LM')
 parser.add_argument('--train_classifier', action='store_true',
                     help='train a classifier on an LM')
+parser.add_argument('--test_classifier', action='store_true',
+                    help='test a classifier/LM combo')
 parser.add_argument('--single', action='store_true',
                     help='use only a single GPU (even if more are available)')
 
@@ -118,6 +122,9 @@ parser.add_argument('--softcliptopk', action="store_true",
                     help='soften non top-k options instead of removing them')
 
 args = parser.parse_args()
+
+if args.test_classifier:
+    args.test = True
 
 if args.interact:
     # If in interactive mode, force complexity output
@@ -165,15 +172,20 @@ def batchify(data, bsz):
 
 eval_batch_size = 10
 
-corpus = data.SentenceCorpus(args.data_dir, args.vocab_file, args.test, args.interact,
+corpus = data.SentenceCorpus(args.data_dir, args.vocab_file, args.classifier_vocab_file,
+                             args.test, args.train_classifier, args.interact,
                              trainfname=args.trainfname,
                              validfname=args.validfname,
                              testfname=args.testfname)
 
 if not args.interact:
-    if args.test:
+    if args.test or args.test_classifier:
         test_sents, test_data = corpus.test
         test_class_sents, test_class_data = corpus.test_classes
+        #print('Test Sents')
+        #print(test_sents)
+        #print('Test_Class_Sents')
+        #print(test_class_sents)
     else:
         train_data = batchify(corpus.train, args.batch_size)
         train_class_data = batchify(corpus.train_classes, args.batch_size)
@@ -184,11 +196,10 @@ if not args.interact:
 # Build/load the model
 ###############################################################################
 
-if not args.test and not args.interact:
+nclasses = len(corpus.class_dictionary)
+if not args.test and not args.interact and not args.train_classifier:
     ntokens = len(corpus.dictionary)
-    nclasses = len(corpus.class_dictionary)
     model = model_lib.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.tied).to(device)
-    classifier = model_lib.NN_Classifier(model,nclasses)
     if args.cuda:
         if (not args.single) and (torch.cuda.device_count() > 1):
             # Scatters minibatches (in dim=1) across available GPUs
@@ -393,7 +404,7 @@ def test_evaluate(test_sentences, data_source):
                 p.data.add_(-lr, p.grad.data)
 
         hidden = repackage_hidden(hidden)
-        
+
         if PROGRESS:
             bar.next()
     if PROGRESS:
@@ -468,7 +479,7 @@ def test_class_evaluate(test_sentences, data_source, class_data_source):
 #                p.data.add_(-lr, p.grad.data)
 
         hidden = repackage_hidden(hidden)
-        
+
         if PROGRESS:
             bar.next()
     if PROGRESS:
@@ -564,20 +575,34 @@ def train_classifier():
         hidden = model.module.init_hidden(args.batch_size)
     else:
         hidden = model.init_hidden(args.batch_size)
+    for parameter in classifier.parameters():
+        # Track grads for classifier parameters
+        parameter.requires_grad = True
+    for parameter in model.parameters():
+        # Don't track grads for model parameters
+        parameter.requires_grad = False
+
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
         data, targets = get_classifier_batch(train_data, train_class_data, i)
+
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
         hidden = repackage_hidden(hidden)
         classifier.zero_grad()
         output, hidden = classifier(data, hidden)
+        #print('A')
+        #print(output.view(-1, nclasses).max(1))
+        #print('B')
+        #print(targets)
+        #print('C')
         loss = criterion(output.view(-1, nclasses), targets)
         loss.backward()
 
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
         torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
         for p in classifier.parameters():
-            p.data.add_(-lr, p.grad.data)
+            if type(p.grad) != type(None):
+                p.data.add_(-lr, p.grad.data)
 
         total_loss += loss.item()
 
@@ -598,40 +623,14 @@ prev_val_loss = None
 prev2_val_loss = None
 
 # At any point you can hit Ctrl + C to break out of training early.
-if not args.test and not args.interact:
-    try:
-        for epoch in range(1, args.epochs+1):
-            epoch_start_time = time.time()
-            train()
-            val_loss = evaluate(val_data)
-            print('-' * 89)
-            print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
-                  'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
-                                             val_loss, math.exp(val_loss)))
-            print('-' * 89)
-            # Save the model if the validation loss is the best we've seen so far.
-            if not best_val_loss or val_loss < best_val_loss:
-                with open(args.model_file, 'wb') as f:
-                    torch.save(model, f)
-                    best_val_loss = val_loss
-            else:
-                # Anneal the learning rate if no improvement has been seen in the validation dataset.
-                if val_loss == prev_val_loss == prev2_val_loss:
-                    print('Covergence achieved! Ending training early')
-                    break
-                prev2_val_loss = prev_val_loss
-                prev_val_loss = val_loss
-                lr /= 4.0
-    except KeyboardInterrupt:
-        print('-' * 89)
-        print('Exiting from training early')
-elif args.train_classifier:
+if args.train_classifier:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
         model = torch.load(f)
         # after load the rnn params are not a continuous chunk of memory
         # this makes them a continuous chunk, and will speed up forward pass
         model.rnn.flatten_parameters()
+    classifier = model_lib.NN_Classifier(model,nclasses)
 
     try:
         for epoch in range(1, args.epochs+1):
@@ -670,13 +669,13 @@ elif args.test_classifier:
         classifier = torch.load(f)
         # after load the classifier params are not a continuous chunk of memory
         # this makes them a continuous chunk; might speed it up?
-        classifier.rnn.flatten_parameters()
+        classifier.rnn_model = model
 
     # Run on test data.
     if args.interact:
         raise Exception("Currently classifiers don't work interactively")
     else:
-        test_loss = test_evaluate(test_sents, test_data, test_class_data)
+        test_loss = test_class_evaluate(test_sents, test_data, test_class_data)
         if args.adapt:
             raise Exception("Currently classifiers don't work adaptively")
     if not args.interact and not args.nopp:
@@ -684,6 +683,33 @@ elif args.test_classifier:
         print('| End of testing | test loss {:5.2f} | test ppl {:8.2f}'.format(
             test_loss, math.exp(test_loss)))
         print('=' * 89)
+elif not args.test and not args.interact:
+    try:
+        for epoch in range(1, args.epochs+1):
+            epoch_start_time = time.time()
+            train()
+            val_loss = evaluate(val_data)
+            print('-' * 89)
+            print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
+                  'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
+                                             val_loss, math.exp(val_loss)))
+            print('-' * 89)
+            # Save the model if the validation loss is the best we've seen so far.
+            if not best_val_loss or val_loss < best_val_loss:
+                with open(args.model_file, 'wb') as f:
+                    torch.save(model, f)
+                    best_val_loss = val_loss
+            else:
+                # Anneal the learning rate if no improvement has been seen in the validation dataset.
+                if val_loss == prev_val_loss == prev2_val_loss:
+                    print('Covergence achieved! Ending training early')
+                    break
+                prev2_val_loss = prev_val_loss
+                prev_val_loss = val_loss
+                lr /= 4.0
+    except KeyboardInterrupt:
+        print('-' * 89)
+        print('Exiting from training early')
 else:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
