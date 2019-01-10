@@ -85,6 +85,8 @@ parser.add_argument('--train_classifier', action='store_true',
                     help='train a classifier on an LM')
 parser.add_argument('--test_classifier', action='store_true',
                     help='test a classifier/LM combo')
+parser.add_argument('--probe_lm', action='store_true',
+                    help='probe an LM using a paired classifier')
 parser.add_argument('--single', action='store_true',
                     help='use only a single GPU (even if more are available)')
 
@@ -123,7 +125,7 @@ parser.add_argument('--softcliptopk', action="store_true",
 
 args = parser.parse_args()
 
-if args.test_classifier:
+if args.test_classifier or args.probe_lm:
     args.test = True
 
 if args.interact:
@@ -259,6 +261,9 @@ def get_guessscores(o):
 def get_complexity(o,t,sentid,which_dictionary=corpus.dictionary):
     Hs = torch.squeeze(apply(get_entropy,o))
     surps = apply(get_surps,o)
+    if t.shape[0] == 1:
+        # Need at least 1 dimension
+        Hs = Hs.unsqueeze(0)
 
     if args.guess:
         guesses = apply(get_guesses, o)
@@ -482,6 +487,125 @@ def test_class_evaluate(test_sentences, data_source, class_data_source):
         bar.finish()
     return total_loss / len(data_source)
 
+def probe_evaluate(test_sentences, data_source, class_data_source):
+    # Must disable cuDNN in order to backprop during eval
+    torch.backends.cudnn.enabled = False
+
+    # Turn on evaluation mode which disables dropout
+    model.eval() #probing requires backpropagation within the model, but we don't want dropout
+    #model.train() 
+    classifier.eval()
+    #classifier.train()
+
+    #for parameter in model.parameters():
+    #    # Don't track grads for model parameters
+    #    parameter.requires_grad = False
+
+    total_loss = 0.
+    ntokens = len(corpus.dictionary)
+    nclasses = len(corpus.class_dictionary)
+    if args.complexn > nclasses or args.complexn <= 0:
+        args.complexn = nclasses
+        if args.guessn > nclasses:
+            args.guessn = nclasses
+        sys.stderr.write('Using beamsize: '+str(nclasses)+'\n')
+    else:
+        sys.stderr.write('Using beamsize: '+str(args.complexn)+'\n')
+
+    if args.words:
+        if not args.nocheader:
+            if args.complexn == nclasses:
+                print('word{0}sentid{0}sentpos{0}wlen{0}surp{0}entropy{0}entred'.format(args.csep), end='')
+            else:
+                print('word{0}sentid{0}sentpos{0}wlen{0}surp{1}{0}entropy{1}{0}entred{1}'.format(args.csep,args.complexn), end='')
+            if args.guess:
+                for i in range(args.guessn):
+                    print('{0}guess'.format(args.csep)+str(i), end='')
+                    if args.guessscores:
+                        print('{0}gscore'.format(args.csep)+str(i), end='')
+                    elif args.guessprobs:
+                        print('{0}gprob'.format(args.csep)+str(i), end='')
+                    elif args.guessratios:
+                        print('{0}gratio'.format(args.csep)+str(i), end='')
+            sys.stdout.write('\n')
+    if PROGRESS:
+        bar = Bar('Processing', max=len(data_source))
+    for i in range(len(data_source)):
+        sent_ids = data_source[i].to(device)
+        class_sent_ids = class_data_source[i].to(device)
+        # We predict all words but the first, so determine loss for those
+        sent = test_sentences[i]
+        if args.cuda and (not args.single) and (torch.cuda.device_count() > 1):
+            # "module" is necessary when using DataParallel
+            hidden = model.module.init_hidden(1) # number of parallel sentences being processed
+        else:
+            hidden = model.init_hidden(1) # number of parallel sentences being processed
+
+        lm_data, lm_targets = test_get_batch(sent_ids)
+        for word_index in range(lm_data.size(0)):
+            # Starting each batch, we detach the hidden state from how it was previously produced.
+            # If we didn't, the model would try backpropagating all the way to start of the dataset.
+            hidden = repackage_hidden(hidden)
+            classifier.zero_grad()
+            model.zero_grad()
+
+            data = lm_data[word_index].unsqueeze(0).unsqueeze(1)
+            lm_target = lm_targets[word_index].unsqueeze(0)
+            #print(data)
+            #data = torch.tensor(sent_ids[word_index].unsqueeze(0).unsqueeze(1),dtype=torch.float64)
+            #data.requires_grad = True
+            #print(data)
+            #print(hidden[0].shape)
+            targets = class_sent_ids[word_index].unsqueeze(0)
+            class_output, hidden_after_class = classifier(data, hidden)
+            class_output_flat = class_output.view(-1, nclasses)
+            #print('A')
+            #print(data)
+            #print(class_output_flat)
+            #print(class_sent_ids)
+            #print(targets)
+            class_loss = criterion(class_output_flat, targets)
+            class_loss.backward()
+
+            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
+            #torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
+            for p in model.parameters():
+                if p.size(0) == ntokens and type(p.grad) != type(None):
+                    # Tweak the encoder weight based on the classifier
+                    # and run the model on that new encoding
+                    my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
+                    break
+
+            data_grad_encoded = my_weight(data)
+            lm_output, hidden = model.probe_forward(data_grad_encoded,hidden)
+            lm_output_flat = lm_output.view(-1, ntokens)
+
+            lm_loss = criterion(lm_output_flat, lm_target)
+            total_loss += lm_loss.item()
+            if args.words:
+                # output word-level complexity metrics
+                get_complexity(lm_output_flat,lm_target,i,corpus.dictionary)
+            else:
+                # output sentence-level loss
+                print(str(sent)+":"+str(loss.item()))
+
+        if args.adapt:
+            raise Exception("Adaptation is not implemented for classifiers.")
+#            loss.backward()
+#
+#            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
+#            torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
+#            for p in model.parameters():
+#                p.data.add_(-lr, p.grad.data)
+
+        hidden = repackage_hidden(hidden)
+
+        if PROGRESS:
+            bar.next()
+    if PROGRESS:
+        bar.finish()
+    return total_loss / len(data_source)
+
 def evaluate(data_source):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -649,7 +773,7 @@ if args.train_classifier:
     except KeyboardInterrupt:
         print('-' * 89)
         print('Exiting from classifier training early')
-elif args.test_classifier:
+elif args.test_classifier or args.probe_lm:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
         model = torch.load(f)
@@ -663,6 +787,8 @@ elif args.test_classifier:
     # Run on test data.
     if args.interact:
         raise Exception("Currently classifiers don't work interactively")
+    elif args.probe_lm:
+        test_loss = probe_evaluate(test_sents, test_data, test_class_data)
     else:
         test_loss = test_class_evaluate(test_sents, test_data, test_class_data)
         if args.adapt:
