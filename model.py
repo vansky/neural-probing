@@ -81,7 +81,7 @@ class NN_Classifier(nn.Module):
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden):
-        class_output = torch.empty((input.size(0),input.size(1),self.nclass),dtype=torch.float,requires_grad=False)
+        class_output = torch.empty((input.size(0),input.size(1),self.nclass),dtype=torch.float,requires_grad=False).to(self.decoder.weight.device)
         for seq_step in range(input.size(0)):
             output, hidden = self.rnn_model(input[seq_step].unsqueeze(0),hidden)
             class_output[seq_step,:,:] = self.decoder(hidden[0][self.which_layer].view(1, -1, self.rnn_model.nhid))
