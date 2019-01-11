@@ -493,7 +493,7 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
 
     # Turn on evaluation mode which disables dropout
     model.eval() #probing requires backpropagation within the model, but we don't want dropout
-    #model.train() 
+    #model.train()
     classifier.eval()
     #classifier.train()
 
@@ -741,11 +741,11 @@ prev2_val_loss = None
 if args.train_classifier:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
-        model = torch.load(f)
+        model = torch.load(f).to(device)
         # after load the rnn params are not a continuous chunk of memory
         # this makes them a continuous chunk, and will speed up forward pass
         model.rnn.flatten_parameters()
-    classifier = model_lib.NN_Classifier(model,nclasses)
+    classifier = model_lib.NN_Classifier(model,nclasses).to(device)
 
     try:
         for epoch in range(1, args.epochs+1):
@@ -776,12 +776,12 @@ if args.train_classifier:
 elif args.test_classifier or args.probe_lm:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
-        model = torch.load(f)
+        model = torch.load(f).to(device)
         # after load the rnn params are not a continuous chunk of memory
         # this makes them a continuous chunk, and will speed up forward pass
         model.rnn.flatten_parameters()
     with open(args.classifier_file, 'rb') as f:
-        classifier = torch.load(f)
+        classifier = torch.load(f).to(device)
         classifier.rnn_model = model
 
     # Run on test data.
@@ -828,7 +828,7 @@ elif not args.test and not args.interact:
 else:
     # Load the best saved model.
     with open(args.model_file, 'rb') as f:
-        model = torch.load(f)
+        model = torch.load(f).to(device)
         # after load the rnn params are not a continuous chunk of memory
         # this makes them a continuous chunk, and will speed up forward pass
         model.rnn.flatten_parameters()

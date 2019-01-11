@@ -1,5 +1,4 @@
 import torch.nn as nn
-from torch import Tensor
 import torch
 
 class RNNModel(nn.Module):
@@ -60,10 +59,10 @@ class RNNModel(nn.Module):
     def init_hidden(self, bsz):
         weight = next(self.parameters()).data
         if self.rnn_type == 'LSTM':
-            return (Tensor(weight.new(self.nlayers, bsz, self.nhid).zero_()),
-                    Tensor(weight.new(self.nlayers, bsz, self.nhid).zero_()))
+            return (torch.tensor(weight.new(self.nlayers, bsz, self.nhid).zero_()),
+                    torch.tensor(weight.new(self.nlayers, bsz, self.nhid).zero_()))
         else:
-            return Tensor(weight.new(self.nlayers, bsz, self.nhid).zero_())
+            return torch.tensor(weight.new(self.nlayers, bsz, self.nhid).zero_())
 
 class NN_Classifier(nn.Module):
     """Container module that stacks a classifier_decoder on top of an RNN."""
