@@ -9,8 +9,8 @@ import random
 
 NUM_SENTS = 250000
 FILTER = True
-RM_RV_SUBJECT = False
-RM_RV_OBJECT = True
+RM_RV_SUBJECT = True
+RM_RV_OBJECT = False
 
 Lexicon = {'DP': ('Det',3),
            'JJ': ('Adj',100),
