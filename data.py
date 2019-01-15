@@ -20,7 +20,8 @@ class Dictionary(object):
 
 class SentenceCorpus(object):
     def __init__(self, path, vocab_file, classifier_vocab_file,
-                 test_flag=False, train_classifier_flag=False,interactflag=False,
+                 test_flag=False, train_classifier_flag=False,
+                 test_classifier_flag=False, interactflag=False,
                  trainfname='train.txt',
                  validfname='valid.txt',
                  testfname='test.txt'):
@@ -37,13 +38,22 @@ class SentenceCorpus(object):
             self.train,self.train_classes = self.tokenize(os.path.join(path, trainfname))
             self.valid,self.valid_classes = self.tokenize_with_unks(os.path.join(path, validfname))
             self.classifier_vocab_file = self.save_dict(classifier_vocab_file, self.class_dictionary)
-        else:
+        elif test_classifier_flag:
+            # Test the classifier
             self.dictionary = Dictionary()
             self.load_dict(vocab_file, self.dictionary)
             self.class_dictionary = Dictionary()
             self.load_dict(classifier_vocab_file, self.class_dictionary)
             if not interactflag:
                 self.test,self.test_classes = self.sent_tokenize_with_unks(os.path.join(path, testfname))
+        else:
+            # Test the LM
+            self.dictionary = Dictionary()
+            self.load_dict(vocab_file, self.dictionary)
+            # Create an empty class_dictionary to reuse code
+            self.class_dictionary = Dictionary()
+            if not interactflag:
+                self.test,self.test_classes = self.sent_tokenize_with_unks(os.path.join(path, testfname))    
 
     def save_dict(self, path, which_dictionary):
         if path[-3:] == 'bin':

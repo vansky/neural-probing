@@ -175,7 +175,8 @@ def batchify(data, bsz):
 eval_batch_size = 10
 
 corpus = data.SentenceCorpus(args.data_dir, args.vocab_file, args.classifier_vocab_file,
-                             args.test, args.train_classifier, args.interact,
+                             args.test, args.train_classifier, args.test_classifier,
+                             args.interact,
                              trainfname=args.trainfname,
                              validfname=args.validfname,
                              testfname=args.testfname)
