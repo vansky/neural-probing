@@ -97,6 +97,10 @@ parser.add_argument('--interact', action='store_true',
 
 parser.add_argument('--words', action='store_true',
                     help='evaluate word-level complexities (instead of sentence-level loss)')
+parser.add_argument('--view_layer', type=int, default=0,
+                    help='output layer activations for each word')
+parser.add_argument('--classifier_weighting', action='store_true',
+                    help='weight layer activations by gradient')
 parser.add_argument('--log_interval', type=int, default=200, metavar='N',
                     help='report interval')
 
@@ -258,6 +262,8 @@ def get_guesses(o,scores=False):
 
 def get_guessscores(o):
     return get_guesses(o,True)
+
+def view_hidden_layer(h,t):
 
 def get_complexity(o,t,sentid,which_dictionary=corpus.dictionary):
     Hs = torch.squeeze(apply(get_entropy,o))
@@ -552,33 +558,50 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
 
             data = lm_data[word_index].unsqueeze(0).unsqueeze(1)
             lm_target = lm_targets[word_index].unsqueeze(0)
-            #print(data)
-            #data = torch.tensor(sent_ids[word_index].unsqueeze(0).unsqueeze(1),dtype=torch.float64)
-            #data.requires_grad = True
-            #print(data)
-            #print(hidden[0].shape)
             targets = class_sent_ids[word_index].unsqueeze(0)
-            class_output, hidden_after_class = classifier(data, hidden)
-            class_output_flat = class_output.view(-1, nclasses)
-            #print('A')
-            #print(data)
-            #print(class_output_flat)
-            #print(class_sent_ids)
-            #print(targets)
-            class_loss = criterion(class_output_flat, targets)
-            class_loss.backward()
+            if args.probe_lm:
+                class_output, hidden_after_class = classifier(data, hidden)
+                class_output_flat = class_output.view(-1, nclasses)
 
-            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-            #torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
-            for p in model.parameters():
-                if p.size(0) == ntokens and type(p.grad) != type(None):
-                    # Tweak the encoder weight based on the classifier
-                    # and run the model on that new encoding
-                    my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
-                    break
+                class_loss = criterion(class_output_flat, targets)
+                class_loss.backward()
 
-            data_grad_encoded = my_weight(data)
-            lm_output, hidden = model.probe_forward(data_grad_encoded,hidden)
+                # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
+                #torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
+                for p in model.parameters():
+                    if p.size(0) == ntokens and type(p.grad) != type(None):
+                        # Tweak the encoder weight based on the classifier
+                        # and run the model on that new encoding
+                        my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
+                        break
+
+                data_grad_encoded = my_weight(data)
+                lm_output, hidden = model.probe_forward(data_grad_encoded,hidden)
+            elif args.view_layer > 0:
+                class_output, hidden_after_class = classifier(data, hidden)
+                class_output_flat = class_output.view(-1, nclasses)
+                if not args.classifier_weighting:
+                    # output raw activations
+                    print(hidden_after_class[0][args.view_layer].view(1,-1))
+                else:
+                    # multiply the activations by the gradients
+                    class_loss = criterion(class_output_flat, targets)
+                    class_loss.backward()
+    
+                    for name, param in model.named_parameters():
+                        if param.requires_grad:
+                            print name, param.data
+                    raise Exception("Still need to implement classifier weighting")
+                    for p in model.parameters():
+                        if p.size(0) == ntokens and type(p.grad) != type(None):
+                            # Tweak the encoder weight based on the classifier
+                            # and run the model on that new encoding
+                            my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
+                            break
+
+                data_grad_encoded = my_weight(data)
+                lm_output, hidden = model.probe_forward(data_grad_encoded,hidden)
+
             lm_output_flat = lm_output.view(-1, ntokens)
 
             lm_loss = criterion(lm_output_flat, lm_target)
@@ -592,12 +615,6 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
 
         if args.adapt:
             raise Exception("Adaptation is not implemented for classifiers.")
-#            loss.backward()
-#
-#            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-#            torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
-#            for p in model.parameters():
-#                p.data.add_(-lr, p.grad.data)
 
         hidden = repackage_hidden(hidden)
 
