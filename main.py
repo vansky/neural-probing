@@ -263,6 +263,10 @@ def get_guesses(o,scores=False):
 def get_guessscores(o):
     return get_guesses(o,True)
 
+def vecs2words(v,which_dictionary=corpus.dictionary):
+    for targ in v:
+        print(which_dictionary.idx2word[int(targ)])
+
 def get_complexity(o,t,sentid,which_dictionary=corpus.dictionary):
     Hs = torch.squeeze(apply(get_entropy,o))
     surps = apply(get_surps,o)
