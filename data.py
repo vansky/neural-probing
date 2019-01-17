@@ -35,7 +35,9 @@ class SentenceCorpus(object):
             self.dictionary = Dictionary()
             self.load_dict(vocab_file, self.dictionary)
             self.class_dictionary = Dictionary()
-            self.train,self.train_classes = self.tokenize(os.path.join(path, trainfname))
+            # The classifier might be trained on different data from the lm
+            # So we need to unk the training data as well as the validation data
+            self.train,self.train_classes = self.tokenize_with_unks(os.path.join(path, trainfname))
             self.valid,self.valid_classes = self.tokenize_with_unks(os.path.join(path, validfname))
             self.classifier_vocab_file = self.save_dict(classifier_vocab_file, self.class_dictionary)
         elif test_classifier_flag:
