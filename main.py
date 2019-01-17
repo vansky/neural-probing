@@ -129,9 +129,12 @@ parser.add_argument('--softcliptopk', action="store_true",
 
 args = parser.parse_args()
 
+if args.view_layer > 0:
+    args.probe_lm = True
+
 if args.test_classifier or args.probe_lm:
     args.test = True
-
+    
 if args.interact:
     # If in interactive mode, force complexity output
     args.words = True
@@ -536,6 +539,7 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
         class_sent_ids = class_data_source[i].to(device)
         # We predict all words but the first, so determine loss for those
         sent = test_sentences[i]
+        sent_loss = 0.
         if args.cuda and (not args.single) and (torch.cuda.device_count() > 1):
             # "module" is necessary when using DataParallel
             hidden = model.module.init_hidden(1) # number of parallel sentences being processed
@@ -553,7 +557,33 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
             data = lm_data[word_index].unsqueeze(0).unsqueeze(1)
             lm_target = lm_targets[word_index].unsqueeze(0)
             targets = class_sent_ids[word_index].unsqueeze(0)
-            if args.probe_lm:
+            if args.view_layer > 0:
+                class_output, hidden_after_class = classifier(data, hidden)
+                class_output_flat = class_output.view(-1, nclasses)
+                if not args.classifier_weighting:
+                    # output raw activations
+                    print(*list(hidden_after_class[0][args.view_layer].view(1,-1).data.cpu().numpy().flatten()), sep=' ')
+                else:
+                    # multiply the activations by the gradients
+                    class_loss = criterion(class_output_flat, targets)
+                    class_loss.backward()
+    
+                    for name, param in model.named_parameters():
+                        if param.requires_grad:
+                            print(name, param.data)
+                    raise Exception("Still need to implement classifier weighting")
+                    for p in model.parameters():
+                        if p.size(0) == ntokens and type(p.grad) != type(None):
+                            # Tweak the encoder weight based on the classifier
+                            # and run the model on that new encoding
+                            my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
+                            break
+                    lm_output, hidden = model(data,hidden)
+                    lm_output_flat = lm_output.view(-1, ntokens)
+                    lm_loss = criterion(lm_output_flat, lm_target)
+                    total_loss += lm_loss.item()
+                    sent_loss += lm_loss.item()
+            else:
                 class_output, hidden_after_class = classifier(data, hidden)
                 class_output_flat = class_output.view(-1, nclasses)
 
@@ -574,38 +604,14 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
                 lm_output_flat = lm_output.view(-1, ntokens)
                 lm_loss = criterion(lm_output_flat, lm_target)
                 total_loss += lm_loss.item()
-
-            elif args.view_layer > 0:
-                class_output, hidden_after_class = classifier(data, hidden)
-                class_output_flat = class_output.view(-1, nclasses)
-                if not args.classifier_weighting:
-                    # output raw activations
-                    print(hidden_after_class[0][args.view_layer].view(1,-1))
-                else:
-                    # multiply the activations by the gradients
-                    class_loss = criterion(class_output_flat, targets)
-                    class_loss.backward()
-    
-                    for name, param in model.named_parameters():
-                        if param.requires_grad:
-                            print(name, param.data)
-                    raise Exception("Still need to implement classifier weighting")
-                    for p in model.parameters():
-                        if p.size(0) == ntokens and type(p.grad) != type(None):
-                            # Tweak the encoder weight based on the classifier
-                            # and run the model on that new encoding
-                            my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
-                            break
-                    lm_output, hidden = model(data,hidden)
-                    lm_output_flat = lm_output.view(-1, ntokens)
-                    lm_loss = criterion(lm_output_flat, lm_target)
-                    total_loss += lm_loss.item()
-            if args.words:
-                # output word-level complexity metrics
-                get_complexity(lm_output_flat,lm_target,i,corpus.dictionary)
-            else:
-                # output sentence-level loss
-                print(str(sent)+":"+str(loss.item()))
+                sent_loss += lm_loss.item()
+                if args.words:
+                    # output word-level complexity metrics
+                    get_complexity(lm_output_flat,lm_target,i,corpus.dictionary)
+        if not args.words and args.view_layer == 0:
+            # output sentence-level loss
+            print(str(sent)+":"+str(sent_loss))
+        raise
 
         if args.adapt:
             raise Exception("Adaptation is not implemented for classifiers.")
