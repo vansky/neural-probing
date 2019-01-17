@@ -263,8 +263,6 @@ def get_guesses(o,scores=False):
 def get_guessscores(o):
     return get_guesses(o,True)
 
-def view_hidden_layer(h,t):
-
 def get_complexity(o,t,sentid,which_dictionary=corpus.dictionary):
     Hs = torch.squeeze(apply(get_entropy,o))
     surps = apply(get_surps,o)
@@ -586,7 +584,7 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
     
                     for name, param in model.named_parameters():
                         if param.requires_grad:
-                            print name, param.data
+                            print(name, param.data)
                     raise Exception("Still need to implement classifier weighting")
                     for p in model.parameters():
                         if p.size(0) == ntokens and type(p.grad) != type(None):
