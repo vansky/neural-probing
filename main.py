@@ -479,12 +479,6 @@ def test_class_evaluate(test_sentences, data_source, class_data_source):
 
         if args.adapt:
             raise Exception("Adaptation is not implemented for classifiers.")
-#            loss.backward()
-#
-#            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-#            torch.nn.utils.clip_grad_norm(classifier.parameters(), args.clip)
-#            for p in model.parameters():
-#                p.data.add_(-lr, p.grad.data)
 
         hidden = repackage_hidden(hidden)
 
@@ -500,9 +494,7 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
 
     # Turn on evaluation mode which disables dropout
     model.eval() #probing requires backpropagation within the model, but we don't want dropout
-    #model.train()
     classifier.eval()
-    #classifier.train()
 
     #for parameter in model.parameters():
     #    # Don't track grads for model parameters
@@ -577,6 +569,10 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
 
                 data_grad_encoded = my_weight(data)
                 lm_output, hidden = model.probe_forward(data_grad_encoded,hidden)
+                lm_output_flat = lm_output.view(-1, ntokens)
+                lm_loss = criterion(lm_output_flat, lm_target)
+                total_loss += lm_loss.item()
+
             elif args.view_layer > 0:
                 class_output, hidden_after_class = classifier(data, hidden)
                 class_output_flat = class_output.view(-1, nclasses)
@@ -598,14 +594,10 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
                             # and run the model on that new encoding
                             my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
                             break
-
-                data_grad_encoded = my_weight(data)
-                lm_output, hidden = model.probe_forward(data_grad_encoded,hidden)
-
-            lm_output_flat = lm_output.view(-1, ntokens)
-
-            lm_loss = criterion(lm_output_flat, lm_target)
-            total_loss += lm_loss.item()
+                    lm_output, hidden = model(data,hidden)
+                    lm_output_flat = lm_output.view(-1, ntokens)
+                    lm_loss = criterion(lm_output_flat, lm_target)
+                    total_loss += lm_loss.item()
             if args.words:
                 # output word-level complexity metrics
                 get_complexity(lm_output_flat,lm_target,i,corpus.dictionary)
