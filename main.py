@@ -97,7 +97,7 @@ parser.add_argument('--interact', action='store_true',
 
 parser.add_argument('--words', action='store_true',
                     help='evaluate word-level complexities (instead of sentence-level loss)')
-parser.add_argument('--view_layer', type=int, default=0,
+parser.add_argument('--view_layer', type=int, default=-1,
                     help='output layer activations for each word')
 parser.add_argument('--classifier_weighting', action='store_true',
                     help='weight layer activations by gradient')
@@ -129,7 +129,7 @@ parser.add_argument('--softcliptopk', action="store_true",
 
 args = parser.parse_args()
 
-if args.view_layer > 0:
+if args.view_layer >= 0:
     args.probe_lm = True
 
 if args.test_classifier or args.probe_lm:
@@ -557,7 +557,7 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
             data = lm_data[word_index].unsqueeze(0).unsqueeze(1)
             lm_target = lm_targets[word_index].unsqueeze(0)
             targets = class_sent_ids[word_index].unsqueeze(0)
-            if args.view_layer > 0:
+            if args.view_layer >= 0:
                 class_output, hidden_after_class = classifier(data, hidden)
                 class_output_flat = class_output.view(-1, nclasses)
                 if not args.classifier_weighting:
@@ -570,7 +570,7 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
     
                     for name, param in model.named_parameters():
                         if param.requires_grad:
-                            print(name, param.data)
+                            print(name, param.data.shape, param.data)
                     raise Exception("Still need to implement classifier weighting")
                     for p in model.parameters():
                         if p.size(0) == ntokens and type(p.grad) != type(None):
@@ -608,10 +608,9 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
                 if args.words:
                     # output word-level complexity metrics
                     get_complexity(lm_output_flat,lm_target,i,corpus.dictionary)
-        if not args.words and args.view_layer == 0:
+        if not args.words and args.view_layer == -1:
             # output sentence-level loss
             print(str(sent)+":"+str(sent_loss))
-        raise
 
         if args.adapt:
             raise Exception("Adaptation is not implemented for classifiers.")
