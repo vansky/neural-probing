@@ -179,8 +179,6 @@ def batchify(data, bsz):
     # Turning the data over to CUDA at this point may lead to more OOM errors
     return data.to(device)
 
-eval_batch_size = 10
-
 corpus = data.SentenceCorpus(args.data_dir, args.vocab_file, args.classifier_vocab_file,
                              args.test, args.train_classifier, args.test_classifier,
                              args.interact,
@@ -195,8 +193,8 @@ if not args.interact:
     else:
         train_data = batchify(corpus.train, args.batch_size)
         train_class_data = batchify(corpus.train_classes, args.batch_size)
-        val_data = batchify(corpus.valid, eval_batch_size)
-        val_class_data = batchify(corpus.valid_classes, eval_batch_size)
+        val_data = batchify(corpus.valid, args.batch_size)
+        val_class_data = batchify(corpus.valid_classes, args.batch_size)
 
 ###############################################################################
 # Build/load the model
@@ -556,38 +554,42 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
 
             data = lm_data[word_index].unsqueeze(0).unsqueeze(1)
             lm_target = lm_targets[word_index].unsqueeze(0)
-            targets = class_sent_ids[word_index].unsqueeze(0)
+            target = class_sent_ids[word_index].unsqueeze(0)
             if args.view_layer >= 0:
                 class_output, hidden_after_class = classifier(data, hidden)
                 class_output_flat = class_output.view(-1, nclasses)
-                if not args.classifier_weighting:
-                    # output raw activations
-                    print(*list(hidden_after_class[0][args.view_layer].view(1,-1).data.cpu().numpy().flatten()), sep=' ')
-                else:
-                    # multiply the activations by the gradients
-                    class_loss = criterion(class_output_flat, targets)
-                    class_loss.backward()
-    
-                    for name, param in model.named_parameters():
-                        if param.requires_grad:
-                            print(name, param.data.shape, param.data)
-                    raise Exception("Still need to implement classifier weighting")
-                    for p in model.parameters():
-                        if p.size(0) == ntokens and type(p.grad) != type(None):
-                            # Tweak the encoder weight based on the classifier
-                            # and run the model on that new encoding
-                            my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
-                            break
-                    lm_output, hidden = model(data,hidden)
-                    lm_output_flat = lm_output.view(-1, ntokens)
-                    lm_loss = criterion(lm_output_flat, lm_target)
-                    total_loss += lm_loss.item()
-                    sent_loss += lm_loss.item()
+                targ_word = corpus.class_dictionary.idx2word[int(target.data)]
+                print(targ_word)
+                if targ_word != '<eos>':
+                    # don't output <eos> markers to align with input
+                    if not args.classifier_weighting:
+                        # output raw activations
+                        print(*list(hidden_after_class[0][args.view_layer].view(1,-1).data.cpu().numpy().flatten()), sep=' ')
+                    else:
+                        # multiply the activations by the gradients
+                        class_loss = criterion(class_output_flat, target)
+                        class_loss.backward()
+        
+                        for name, param in model.named_parameters():
+                            if param.requires_grad:
+                                print(name, param.data.shape, param.data)
+                        raise Exception("Still need to implement classifier weighting")
+                        for p in model.parameters():
+                            if p.size(0) == ntokens and type(p.grad) != type(None):
+                                # Tweak the encoder weight based on the classifier
+                                # and run the model on that new encoding
+                                my_weight = torch.nn.Embedding.from_pretrained(p.data.add(-lr, p.grad.data))
+                                break
+                        lm_output, hidden = model(data,hidden)
+                        lm_output_flat = lm_output.view(-1, ntokens)
+                        lm_loss = criterion(lm_output_flat, lm_target)
+                        total_loss += lm_loss.item()
+                        sent_loss += lm_loss.item()
             else:
                 class_output, hidden_after_class = classifier(data, hidden)
                 class_output_flat = class_output.view(-1, nclasses)
 
-                class_loss = criterion(class_output_flat, targets)
+                class_loss = criterion(class_output_flat, target)
                 class_loss.backward()
 
                 # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
@@ -630,9 +632,9 @@ def evaluate(data_source):
     ntokens = len(corpus.dictionary)
     if args.cuda and (not args.single) and (torch.cuda.device_count() > 1):
         # "module" is necessary when using DataParallel
-        hidden = model.module.init_hidden(eval_batch_size)
+        hidden = model.module.init_hidden(args.batch_size)
     else:
-        hidden = model.init_hidden(eval_batch_size)
+        hidden = model.init_hidden(args.batch_size)
     with torch.no_grad():
         for i in range(0, data_source.size(0) - 1, args.bptt):
             data, targets = get_batch(data_source, i)
@@ -650,12 +652,17 @@ def evaluate_classifier(data_source,class_data_source):
     nclasses = len(corpus.class_dictionary)
     if args.cuda and (not args.single) and (torch.cuda.device_count() > 1):
         # "module" is necessary when using DataParallel
-        hidden = model.module.init_hidden(eval_batch_size)
+        hidden = model.module.init_hidden(args.batch_size)
     else:
-        hidden = model.init_hidden(eval_batch_size)
+        hidden = model.init_hidden(args.batch_size)
     with torch.no_grad():
         for i in range(0, data_source.size(0) - 1, args.bptt):
             data, targets = get_classifier_batch(data_source, class_data_source, i)
+#            for tix in range(len(targets)):
+#                print(corpus.dictionary.idx2word[int(data[tix])])
+#                print(int(data[tix]))
+#                print(corpus.class_dictionary.idx2word[int(targets[tix])])
+#            sys.stdout.flush()
             output, hidden = classifier(data, hidden)
             output_flat = output.view(-1, nclasses)
             total_loss += len(data) * criterion(output_flat, targets).item()

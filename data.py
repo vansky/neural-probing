@@ -37,7 +37,8 @@ class SentenceCorpus(object):
             self.class_dictionary = Dictionary()
             # The classifier might be trained on different data from the lm
             # So we need to unk the training data as well as the validation data
-            self.train,self.train_classes = self.tokenize_with_unks(os.path.join(path, trainfname))
+            self.train,_ = self.tokenize_with_unks(os.path.join(path, trainfname))
+            _,self.train_classes = self.tokenize(os.path.join(path, trainfname),modify_lang=False)
             self.valid,self.valid_classes = self.tokenize_with_unks(os.path.join(path, validfname))
             self.classifier_vocab_file = self.save_dict(classifier_vocab_file, self.class_dictionary)
         elif test_classifier_flag:
@@ -88,7 +89,7 @@ class SentenceCorpus(object):
                 for line in f:
                     which_dictionary.add_word(line.strip())
 
-    def tokenize(self, path):
+    def tokenize(self, path, modify_lang=True):
         """Tokenizes a text file."""
         assert os.path.exists(path)
         # Add words to the dictionary
@@ -111,8 +112,9 @@ class SentenceCorpus(object):
                     else:
                         words = line.split() + ['<eos>']
                     tokens += len(words)
-                    for word in words:
-                        self.dictionary.add_word(word)
+                    if modify_lang:
+                        for word in words:
+                            self.dictionary.add_word(word)
                 else:
                     classes = line.split() + ['<eos>']
                     for this_class in classes:
@@ -136,9 +138,10 @@ class SentenceCorpus(object):
                         words = ['<eos>'] + line.split() + ['<eos>']
                     else:
                         words = line.split() + ['<eos>']
-                    for word in words:
-                        ids[token] = self.dictionary.word2idx[word]
-                        token += 1
+                    if modify_lang:
+                        for word in words:
+                            ids[token] = self.dictionary.word2idx[word]
+                            token += 1
                 else:
                     if FIRST:
                         classes = ['<eos>'] + line.split() + ['<eos>']
@@ -151,7 +154,7 @@ class SentenceCorpus(object):
                 lang_line = not lang_line
         return (ids, class_ids)
 
-    def tokenize_with_unks(self, path):
+    def tokenize_with_unks(self, path, modify_lang=True):
         """Tokenizes a text file, adding unks if needed."""
         assert os.path.exists(path)
         # Determine the length of the corpus
@@ -193,13 +196,14 @@ class SentenceCorpus(object):
                         words = ['<eos>'] + line.split() + ['<eos>']
                     else:
                         words = line.split() + ['<eos>']
-                    for word in words:
-                        # Convert OOV to <unk>
-                        if word not in self.dictionary.word2idx:
-                            ids[token] = self.dictionary.add_word("<unk>")
-                        else:
-                            ids[token] = self.dictionary.word2idx[word]
-                        token += 1
+                    if modify_lang:
+                        for word in words:
+                            # Convert OOV to <unk>
+                            if word not in self.dictionary.word2idx:
+                                ids[token] = self.dictionary.add_word("<unk>")
+                            else:
+                                ids[token] = self.dictionary.word2idx[word]
+                            token += 1
                 else:
                     if FIRST:
                         classes = ['<eos>'] + line.split() + ['<eos>']
