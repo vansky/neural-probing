@@ -559,9 +559,9 @@ def probe_evaluate(test_sentences, data_source, class_data_source):
                 class_output, hidden_after_class = classifier(data, hidden)
                 class_output_flat = class_output.view(-1, nclasses)
                 targ_word = corpus.class_dictionary.idx2word[int(target.data)]
-                print(targ_word)
                 if targ_word != '<eos>':
                     # don't output <eos> markers to align with input
+                    #print(targ_word)
                     if not args.classifier_weighting:
                         # output raw activations
                         print(*list(hidden_after_class[0][args.view_layer].view(1,-1).data.cpu().numpy().flatten()), sep=' ')
